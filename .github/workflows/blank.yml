@@ -1,0 +1,83 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Pasang dependensi
+        run: npm install
+
+      - name: Siapkan folder web dan aset
+        run: |
+          mkdir -p www assets
+          cp index.html www/index.html
+          cp icon-*.png splash*.png assets/
+
+      - name: Buat proyek Android
+        run: npx cap add android
+
+      - name: Siapkan pustaka impor PDF dan OCR (offline di dalam APK)
+        run: |
+          mkdir -p www/vendor/pdfjs www/vendor/tess/core www/vendor/tess/lang
+          cp node_modules/pdfjs-dist/legacy/build/pdf.min.mjs www/vendor/pdfjs/pdf.min.js || echo "PERINGATAN: pdf.js tidak ditemukan, impor PDF tidak aktif"
+          cp node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs www/vendor/pdfjs/pdf.worker.min.js || echo "PERINGATAN: worker pdf.js tidak ditemukan"
+          cp node_modules/tesseract.js/dist/tesseract.min.js node_modules/tesseract.js/dist/worker.min.js www/vendor/tess/ || echo "PERINGATAN: tesseract.js tidak ditemukan, OCR tidak aktif"
+          cp node_modules/tesseract.js-core/tesseract-core* www/vendor/tess/core/ || echo "PERINGATAN: inti OCR tidak ditemukan"
+          for L in ind eng; do
+            F=$(find node_modules/@tesseract.js-data/$L -name "$L.traineddata.gz" | grep best_int | head -1)
+            [ -z "$F" ] && F=$(find node_modules/@tesseract.js-data/$L -name "$L.traineddata.gz" | head -1)
+            if [ -n "$F" ]; then cp "$F" www/vendor/tess/lang/; else echo "PERINGATAN: data bahasa $L tidak ditemukan"; fi
+          done
+          find www/vendor -type f | sort
+
+      - name: Pasang izin notifikasi di AndroidManifest
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          for P in POST_NOTIFICATIONS RECEIVE_BOOT_COMPLETED; do
+            grep -q "android.permission.$P" $M || sed -i "s#</manifest>#    <uses-permission android:name=\"android.permission.$P\" />\n</manifest>#" $M
+          done
+          grep -n "uses-permission" $M
+
+      - name: Buat ikon dan splash screen
+        run: npx capacitor-assets generate --android --assetPath assets
+
+      - name: Sinkronkan web ke Android
+        run: npx cap sync android
+
+      - name: Build APK debug
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Ganti nama APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk AIStudyMemory.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIStudyMemory-apk
+          path: AIStudyMemory.apk
+
+      - name: Rilis di GitHub Releases (hanya saat tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AIStudyMemory.apk
