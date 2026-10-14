@@ -1,0 +1,7 @@
+{
+  "appId": "com.aistudymemory.app",
+  "appName": "AI Study Memory",
+  "webDir": "www",
+  "backgroundColor": "#060a1d",
+  "plugins": { "CapacitorHttp": { "enabled": true } }
+}
